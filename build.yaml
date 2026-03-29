@@ -1,0 +1,7 @@
+---
+version: 1
+
+jellyfin_version: "10.9.0.0"
+
+artifacts:
+  - Jellyfin.Plugin.NextUpFilter.dll

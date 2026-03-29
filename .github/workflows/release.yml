@@ -1,0 +1,150 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# GITHUB_TOKEN needs write access to create releases and push the manifest commit.
+permissions:
+  contents: write
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  TARGET_ABI:     '10.9.0.0'
+  PLUGIN_GUID:    'a8e7d6c5-b4a3-4e2f-9d1b-c0e8f7a6d5b4'
+  PLUGIN_NAME:    'Jellyfin.Plugin.NextUpFilter'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Full history so we can switch to main later in the same job.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Parse the tag ─────────────────────────────────────────────────────────
+      # Tags: v1.2.3  →  assembly version 1.2.3.0
+      #       v1.2.3-rc.1  →  assembly version 1.2.3.0, prerelease=true
+      - name: Parse tag
+        id: tag
+        run: |
+          TAG="${{ github.ref_name }}"
+
+          VERSION=$(echo "$TAG" \
+            | sed 's/^v//' \
+            | sed -E 's/-(preview|rc|beta|alpha).*//')
+
+          # Jellyfin assembly versions are four-part (major.minor.patch.build)
+          DOTNET_VERSION=$(echo "$VERSION" | awk -F. '{
+            printf "%s.%s.%s.%s", $1, ($2==""?"0":$2), ($3==""?"0":$3), ($4==""?"0":$4)
+          }')
+
+          if echo "$TAG" | grep -Ei '\-(preview|rc|beta|alpha)' > /dev/null; then
+            PRERELEASE=true
+          else
+            PRERELEASE=false
+          fi
+
+          echo "version=$VERSION"           >> "$GITHUB_OUTPUT"
+          echo "dotnet_version=$DOTNET_VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE"     >> "$GITHUB_OUTPUT"
+
+          echo "Tag: $TAG  →  version: $VERSION ($DOTNET_VERSION)  prerelease: $PRERELEASE"
+
+      # ── Build ─────────────────────────────────────────────────────────────────
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: |
+          dotnet build ${{ env.PLUGIN_NAME }}.csproj \
+            --configuration Release \
+            --no-restore \
+            -o build_output \
+            /p:Version=${{ steps.tag.outputs.dotnet_version }} \
+            /p:AssemblyVersion=${{ steps.tag.outputs.dotnet_version }}
+
+      # ── Package ───────────────────────────────────────────────────────────────
+      - name: Create ZIP
+        run: |
+          mkdir staging
+          cp build_output/${{ env.PLUGIN_NAME }}.dll staging/
+          # Include deps.json only when the plugin has non-Jellyfin runtime dependencies.
+          [ -f build_output/${{ env.PLUGIN_NAME }}.deps.json ] \
+            && cp build_output/${{ env.PLUGIN_NAME }}.deps.json staging/ || true
+          cd staging
+          zip -X ../${{ env.PLUGIN_NAME }}_${{ github.ref_name }}.zip *
+
+      # ── GitHub Release ────────────────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: ${{ env.PLUGIN_NAME }}_${{ github.ref_name }}.zip
+          prerelease: ${{ steps.tag.outputs.prerelease }}
+          generate_release_notes: true
+
+      # ── Update manifest.json in this repo ────────────────────────────────────
+      # Strategy:
+      #   1. Compute checksum and build the new version object.
+      #   2. Switch the local workspace to main (the ZIP is untracked, so it survives).
+      #   3. Prepend the new version entry into manifest.json.
+      #   4. Commit and push to main.
+      #
+      # Uses GITHUB_TOKEN (no PAT needed for same-repo pushes).
+      # The push is done as github-actions[bot] so it does NOT re-trigger CI
+      # (see the paths-ignore in ci.yml).
+      - name: Update manifest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION:  ${{ steps.tag.outputs.dotnet_version }}
+          TAG:      ${{ github.ref_name }}
+        run: |
+          ZIP="${{ env.PLUGIN_NAME }}_${TAG}.zip"
+          CHECKSUM=$(md5sum "$ZIP" | cut -d' ' -f1 | tr '[:lower:]' '[:upper:]')
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${ZIP}"
+          TIMESTAMP=$(date -u +'%Y-%m-%d')
+
+          # Fetch auto-generated release notes; strip the "by @user in <url>" suffixes
+          # that GitHub appends to each PR line.
+          NOTES=$(gh release view "${TAG}" --json body -q '.body // ""' \
+            | sed -E 's/[[:space:]]*by @[[:alnum:]-]+ in https?:\/\/[^[:space:]]+//g')
+
+          NEW_PKG=$(jq -n \
+            --arg version   "$VERSION" \
+            --arg abi       "${{ env.TARGET_ABI }}" \
+            --arg url       "$DOWNLOAD_URL" \
+            --arg checksum  "$CHECKSUM" \
+            --arg changelog "$NOTES" \
+            --arg timestamp "$TIMESTAMP" \
+            '{
+              version:    $version,
+              targetAbi:  $abi,
+              sourceUrl:  $url,
+              checksum:   $checksum,
+              changelog:  $changelog,
+              timestamp:  $timestamp
+            }')
+
+          # Switch to main; the untracked ZIP stays in the working directory.
+          git fetch origin main
+          git checkout main
+
+          # Prepend the new version to the matching plugin entry's versions array.
+          jq --argjson pkg  "$NEW_PKG" \
+             --arg     guid "${{ env.PLUGIN_GUID }}" \
+            '(.[] | select(.guid == $guid) | .versions) |= [$pkg] + .' \
+            manifest.json > manifest.tmp && mv manifest.tmp manifest.json
+
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add manifest.json
+          git commit -m "chore: add ${{ env.PLUGIN_NAME }} ${TAG} to manifest"
+          git push origin main

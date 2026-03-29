@@ -1,0 +1,12 @@
+[
+  {
+    "guid": "a8e7d6c5-b4a3-4e2f-9d1b-c0e8f7a6d5b4",
+    "name": "Next Up Filter",
+    "overview": "Hide selected series from the Next Up list.",
+    "description": "Filters the Next Up endpoint to remove episodes belonging to a configurable set of series. Supports a manual exclusion list and dynamic exclusion from any Jellyfin playlist.",
+    "owner": "",
+    "category": "General",
+    "imageUrl": "",
+    "versions": []
+  }
+]
