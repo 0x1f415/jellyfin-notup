@@ -2,12 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths-ignore:
       - '**.md'
       - 'manifest.json'   # manifest-update commits must not trigger a new CI run
   pull_request:
-    branches: [main]
+    branches: [master]
 
 env:
   DOTNET_VERSION: '8.0.x'
