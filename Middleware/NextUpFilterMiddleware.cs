@@ -178,7 +178,8 @@ public sealed class NextUpFilterMiddleware
         }
 
         var key = userId.ToString().ToLowerInvariant();
-        if (!config.UserSettings.TryGetValue(key, out var userConfig))
+        var userConfig = Array.Find(config.UserSettings, s => s.UserId == key);
+        if (userConfig is null)
             return new HashSet<Guid>();
 
         var ids = new HashSet<Guid>();

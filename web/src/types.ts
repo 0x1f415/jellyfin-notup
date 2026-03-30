@@ -6,15 +6,17 @@ export interface ExclusionItem {
   name: string
 }
 
-export interface UserFilterConfig {
+export interface UserSetting {
+  UserId: string
   ExclusionItems: ExclusionItem[]
 }
 
 export interface PluginConfig {
-  UserSettings: Record<string, UserFilterConfig>
+  UserSettings: UserSetting[]
 }
 
-export const emptyUserConfig = (): UserFilterConfig => ({
+export const emptyUserSetting = (userId: string): UserSetting => ({
+  UserId: userId,
   ExclusionItems: [],
 })
 

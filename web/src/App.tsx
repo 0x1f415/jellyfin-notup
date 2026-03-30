@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ExclusionSearch } from './components/ExclusionSearch'
-import type { ExclusionItem, PluginConfig, UserFilterConfig } from './types'
-import { emptyUserConfig } from './types'
+import type { ExclusionItem, PluginConfig } from './types'
+import { emptyUserSetting } from './types'
 
 const PLUGIN_ID = 'a8e7d6c5-b4a3-4e2f-9d1b-c0e8f7a6d5b4'
 
@@ -9,7 +9,7 @@ export default function App() {
   const [users,          setUsers]          = useState<JellyfinUser[]>([])
   const [selectedUserId, setSelectedUserId] = useState('')
   const [items,          setItems]          = useState<ExclusionItem[]>([])
-  const [fullConfig,     setFullConfig]     = useState<PluginConfig>({ UserSettings: {} })
+  const [fullConfig,     setFullConfig]     = useState<PluginConfig>({ UserSettings: [] })
   const [ready,          setReady]          = useState(false)
 
   // ── Initial load ────────────────────────────────────────────────────────────
@@ -40,9 +40,10 @@ export default function App() {
 
   // ── Load a user's config slice into local state ──────────────────────────────
   function applyUserConfig(userId: string, config: PluginConfig) {
-    const userConfig: UserFilterConfig =
-      config.UserSettings?.[userId.toLowerCase()] ?? emptyUserConfig()
-    setItems(userConfig.ExclusionItems ?? [])
+    const key = userId.toLowerCase()
+    const userSetting = config.UserSettings?.find(s => s.UserId === key)
+      ?? emptyUserSetting(key)
+    setItems(userSetting.ExclusionItems ?? [])
   }
 
   function handleUserChange(userId: string) {
@@ -55,12 +56,14 @@ export default function App() {
     e.preventDefault()
     Dashboard.showLoadingMsg()
 
+    const key = selectedUserId.toLowerCase()
+    const updatedSettings = [
+      ...(fullConfig.UserSettings ?? []).filter(s => s.UserId !== key),
+      { UserId: key, ExclusionItems: items },
+    ]
     const updatedConfig: PluginConfig = {
       ...fullConfig,
-      UserSettings: {
-        ...fullConfig.UserSettings,
-        [selectedUserId.toLowerCase()]: { ExclusionItems: items },
-      },
+      UserSettings: updatedSettings,
     }
 
     ApiClient.updatePluginConfiguration(PLUGIN_ID, updatedConfig as unknown as Record<string, unknown>)

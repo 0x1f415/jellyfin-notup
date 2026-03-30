@@ -9,17 +9,21 @@ namespace Jellyfin.Plugin.NextUpFilter;
 public class PluginConfiguration : BasePluginConfiguration
 {
     /// <summary>
-    /// Per-user filter settings keyed by user ID (lowercase GUID string,
-    /// e.g. "3fa85f64-5717-4562-b3fc-2c963f66afa6").
+    /// Per-user filter settings.  Stored as a flat array (rather than a
+    /// Dictionary) because XmlSerializer cannot serialize IDictionary types.
+    /// Keyed logically by <see cref="UserSetting.UserId"/> (lowercase GUID).
     /// </summary>
-    public Dictionary<string, UserFilterConfig> UserSettings { get; set; } = new();
+    public UserSetting[] UserSettings { get; set; } = Array.Empty<UserSetting>();
 }
 
 /// <summary>
 /// Filter settings for a single Jellyfin user.
 /// </summary>
-public class UserFilterConfig
+public class UserSetting
 {
+    /// <summary>Lowercase GUID string identifying the Jellyfin user.</summary>
+    public string UserId { get; set; } = string.Empty;
+
     /// <summary>
     /// Ordered list of items to exclude from Next Up.
     /// Each entry is either a Series (excluded directly), a Playlist, or a
