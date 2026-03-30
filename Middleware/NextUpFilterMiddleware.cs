@@ -66,18 +66,7 @@ public sealed class NextUpFilterMiddleware
 
         // ── 2. Build exclusion sets ───────────────────────────────────────────────
         var config = plugin.Configuration;
-
-        _logger.LogInformation(
-            "NextUpFilter: intercepted NextUp request. UserSettings count={Count}, query={Query}",
-            config.UserSettings.Length,
-            context.Request.QueryString);
-
         var (excludedSeriesIds, excludedItemIds) = BuildExclusionSets(config, libraryManager, context.Request);
-
-        _logger.LogInformation(
-            "NextUpFilter: exclusion sets — seriesIds=[{SeriesIds}] itemIds=[{ItemIds}]",
-            string.Join(", ", excludedSeriesIds),
-            string.Join(", ", excludedItemIds));
 
         if (excludedSeriesIds.Count == 0 && excludedItemIds.Count == 0)
         {
@@ -182,19 +171,8 @@ public sealed class NextUpFilterMiddleware
         var key        = userId.ToString("N").ToLowerInvariant();
         var userConfig = Array.Find(config.UserSettings, s => s.UserId == key);
 
-        _logger.LogInformation(
-            "NextUpFilter: looking up user key={Key}, found={Found}, all keys=[{AllKeys}]",
-            key,
-            userConfig is not null,
-            string.Join(", ", config.UserSettings.Select(s => s.UserId)));
-
         if (userConfig is null)
             return (seriesIds, itemIds);
-
-        _logger.LogInformation(
-            "NextUpFilter: user has {Count} exclusion entries: [{Entries}]",
-            userConfig.ExclusionItems.Length,
-            string.Join(", ", userConfig.ExclusionItems.Select(e => $"{e.Type}:{e.Id}:{e.Name}")));
 
         foreach (var entry in userConfig.ExclusionItems)
         {
@@ -240,12 +218,6 @@ public sealed class NextUpFilterMiddleware
             }
 
             var linked = folder.LinkedChildren;
-            _logger.LogInformation(
-                "NextUpFilter: container {Id} ({Type}) has {Count} linked children",
-                containerId,
-                container.GetType().Name,
-                linked.Length);
-
             foreach (var child in linked)
             {
                 if (child.ItemId.HasValue)
@@ -296,15 +268,9 @@ public sealed class NextUpFilterMiddleware
 
             writer.WriteNumber("TotalRecordCount", totalFiltered);
             writer.WriteNumber("StartIndex",       startIndex);
-            writer.WriteBoolean("NextUpFilterActive", true);
 
             writer.WriteEndObject();
             writer.Flush();
-
-            _logger.LogInformation(
-                "NextUpFilter: {Total} total → {Filtered} after filtering → returning [{Start}..{End}]",
-                totalFiltered + (excludedSeriesIds.Count + excludedItemIds.Count), totalFiltered,
-                startIndex, startIndex + page.Count - 1);
 
             return Encoding.UTF8.GetString(ms.ToArray());
         }
