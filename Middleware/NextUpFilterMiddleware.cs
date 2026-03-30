@@ -233,7 +233,13 @@ public sealed class NextUpFilterMiddleware
                 return;
             }
 
-            var linked = container.LinkedChildren;
+            if (container is not MediaBrowser.Controller.Entities.Folder folder)
+            {
+                _logger.LogWarning("NextUpFilter: container {Id} is {Type}, not a Folder — cannot read linked children", containerId, container.GetType().Name);
+                return;
+            }
+
+            var linked = folder.LinkedChildren;
             _logger.LogInformation(
                 "NextUpFilter: container {Id} ({Type}) has {Count} linked children",
                 containerId,
