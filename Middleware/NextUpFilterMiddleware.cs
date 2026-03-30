@@ -63,7 +63,18 @@ public sealed class NextUpFilterMiddleware
 
         // ── 2. Build the set of excluded series GUIDs ─────────────────────────────
         var config      = plugin.Configuration;
+
+        _logger.LogInformation(
+            "NextUpFilter: intercepted NextUp request. UserSettings count={Count}, query={Query}",
+            config.UserSettings.Length,
+            context.Request.QueryString);
+
         var excludedIds = BuildExclusionSet(config, libraryManager, context.Request);
+
+        _logger.LogInformation(
+            "NextUpFilter: exclusion set resolved to {Count} series IDs: [{Ids}]",
+            excludedIds.Count,
+            string.Join(", ", excludedIds));
 
         if (excludedIds.Count == 0)
         {
@@ -179,8 +190,20 @@ public sealed class NextUpFilterMiddleware
 
         var key = userId.ToString().ToLowerInvariant();
         var userConfig = Array.Find(config.UserSettings, s => s.UserId == key);
+
+        _logger.LogInformation(
+            "NextUpFilter: looking up user key={Key}, found={Found}, all keys=[{AllKeys}]",
+            key,
+            userConfig is not null,
+            string.Join(", ", config.UserSettings.Select(s => s.UserId)));
+
         if (userConfig is null)
             return new HashSet<Guid>();
+
+        _logger.LogInformation(
+            "NextUpFilter: user has {Count} exclusion entries: [{Entries}]",
+            userConfig.ExclusionItems.Length,
+            string.Join(", ", userConfig.ExclusionItems.Select(e => $"{e.Type}:{e.Id}:{e.Name}")));
 
         var ids = new HashSet<Guid>();
 
@@ -306,6 +329,7 @@ public sealed class NextUpFilterMiddleware
 
             writer.WriteNumber("TotalRecordCount", totalFiltered);
             writer.WriteNumber("StartIndex",       startIndex);
+            writer.WriteBoolean("NextUpFilterActive", true);
 
             writer.WriteEndObject();
             writer.Flush();
