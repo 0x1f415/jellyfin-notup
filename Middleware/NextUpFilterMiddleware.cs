@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
@@ -9,22 +8,26 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.NextUpFilter.Middleware;
 
 /// <summary>
-/// Intercepts GET /Shows/NextUp responses and removes episodes whose parent
-/// series appear in the plugin's exclusion lists (manually configured IDs and/or
-/// the contents of a nominated playlist).
+/// Intercepts GET /Shows/NextUp responses and filters out episodes according to
+/// each user's exclusion list.
 /// </summary>
 /// <remarks>
+/// Exclusion semantics:
+///   • Series   — every Next Up episode whose SeriesId matches is removed.
+///   • Playlist / BoxSet — only episodes whose Id appears directly in the
+///     container's linked-children list are removed.  The series is NOT
+///     implicitly excluded; use a Series entry for that.
+///
 /// Pagination strategy (fetch-ahead stitching):
-///   The original limit/startIndex are captured and replaced with limit=<see cref="FetchAheadLimit"/>
-///   startIndex=0 before the request is forwarded to Jellyfin's own handler.
-///   Jellyfin does its normal work on the full dataset; the middleware then filters
-///   the enlarged batch, applies the original startIndex/limit as a slice, and
-///   sets TotalRecordCount to the filtered total.  This means pagination is always
-///   correct regardless of how many series are excluded.
+///   The original limit/startIndex are captured and replaced with
+///   limit=<see cref="FetchAheadLimit"/> startIndex=0 before the request is
+///   forwarded to Jellyfin.  The middleware then filters the enlarged batch,
+///   applies the original startIndex/limit as a slice, and sets
+///   TotalRecordCount to the filtered total.
 ///
 ///   Other notes:
-///   • Accept-Encoding is stripped so the upstream response is uncompressed JSON.
-///   • Playlist exclusions are resolved per-request; changes take effect immediately.
+///   • Accept-Encoding is stripped so the upstream response is plain JSON.
+///   • Container contents are resolved per-request; changes take effect immediately.
 ///   • On any JSON parse error the original body is forwarded unchanged.
 /// </remarks>
 public sealed class NextUpFilterMiddleware
@@ -61,33 +64,31 @@ public sealed class NextUpFilterMiddleware
             return;
         }
 
-        // ── 2. Build the set of excluded series GUIDs ─────────────────────────────
-        var config      = plugin.Configuration;
+        // ── 2. Build exclusion sets ───────────────────────────────────────────────
+        var config = plugin.Configuration;
 
         _logger.LogInformation(
             "NextUpFilter: intercepted NextUp request. UserSettings count={Count}, query={Query}",
             config.UserSettings.Length,
             context.Request.QueryString);
 
-        var excludedIds = BuildExclusionSet(config, libraryManager, context.Request);
+        var (excludedSeriesIds, excludedItemIds) = BuildExclusionSets(config, libraryManager, context.Request);
 
         _logger.LogInformation(
-            "NextUpFilter: exclusion set resolved to {Count} series IDs: [{Ids}]",
-            excludedIds.Count,
-            string.Join(", ", excludedIds));
+            "NextUpFilter: exclusion sets — seriesIds=[{SeriesIds}] itemIds=[{ItemIds}]",
+            string.Join(", ", excludedSeriesIds),
+            string.Join(", ", excludedItemIds));
 
-        if (excludedIds.Count == 0)
+        if (excludedSeriesIds.Count == 0 && excludedItemIds.Count == 0)
         {
             await _next(context);
             return;
         }
 
         // ── 3. Capture original pagination, replace with fetch-ahead values ───────
-        var originalQuery  = context.Request.Query;
-        int origLimit      = ParseIntParam(originalQuery, "limit",      20);
-        int origStartIndex = ParseIntParam(originalQuery, "startIndex", 0);
+        int origLimit      = ParseIntParam(context.Request.Query, "limit",      20);
+        int origStartIndex = ParseIntParam(context.Request.Query, "startIndex", 0);
 
-        // Rewrite query string: fetch everything from the beginning.
         context.Request.QueryString = ReplaceQueryParams(
             context.Request.QueryString,
             ("limit",      FetchAheadLimit.ToString()),
@@ -121,7 +122,7 @@ public sealed class NextUpFilterMiddleware
         buffer.Seek(0, SeekOrigin.Begin);
         var rawJson = await new StreamReader(buffer, Encoding.UTF8).ReadToEndAsync();
 
-        var filteredJson = FilterNextUpJson(rawJson, excludedIds, origStartIndex, origLimit);
+        var filteredJson = FilterNextUpJson(rawJson, excludedSeriesIds, excludedItemIds, origStartIndex, origLimit);
 
         var filteredBytes = Encoding.UTF8.GetBytes(filteredJson);
         context.Response.ContentLength = filteredBytes.Length;
@@ -133,62 +134,52 @@ public sealed class NextUpFilterMiddleware
     // ─────────────────────────────────────────────────────────────────────────────
 
     private static bool IsNextUpRequest(HttpRequest request)
-    {
-        return request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase)
-            && request.Path.Value is { } path
-            && path.Contains("/Shows/NextUp", StringComparison.OrdinalIgnoreCase);
-    }
+        => request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase)
+        && request.Path.Value is { } path
+        && path.Contains("/Shows/NextUp", StringComparison.OrdinalIgnoreCase);
 
     private static int ParseIntParam(IQueryCollection query, string key, int fallback)
-    {
-        return query.TryGetValue(key, out var sv)
-            && int.TryParse(sv.FirstOrDefault(), out var v) ? v : fallback;
-    }
+        => query.TryGetValue(key, out var sv)
+        && int.TryParse(sv.FirstOrDefault(), out var v) ? v : fallback;
 
-    /// <summary>
-    /// Returns a new <see cref="QueryString"/> with the given key/value pairs
-    /// overwritten; all other parameters are preserved.
-    /// </summary>
     private static QueryString ReplaceQueryParams(QueryString original, params (string key, string value)[] overrides)
     {
-        // Parse existing params into a mutable dict.
-        var dict = Microsoft.AspNetCore.WebUtilities.QueryHelpers
-            .ParseQuery(original.Value ?? string.Empty);
-
+        var dict = QueryHelpers.ParseQuery(original.Value ?? string.Empty);
         foreach (var (k, v) in overrides)
             dict[k] = v;
 
-        var sb = new System.Text.StringBuilder("?");
+        var sb = new StringBuilder("?");
         foreach (var kv in dict)
+        foreach (var val in kv.Value)
         {
-            foreach (var val in kv.Value)
-            {
-                if (sb.Length > 1) sb.Append('&');
-                sb.Append(Uri.EscapeDataString(kv.Key));
-                sb.Append('=');
-                sb.Append(Uri.EscapeDataString(val ?? string.Empty));
-            }
+            if (sb.Length > 1) sb.Append('&');
+            sb.Append(Uri.EscapeDataString(kv.Key));
+            sb.Append('=');
+            sb.Append(Uri.EscapeDataString(val ?? string.Empty));
         }
         return new QueryString(sb.ToString());
     }
 
     /// <summary>
-    /// Returns the exclusion set for the user identified by the <c>userId</c>
-    /// query parameter.  Returns an empty set when no per-user config exists.
+    /// Returns two sets:
+    /// <list type="bullet">
+    ///   <item><c>seriesIds</c>  — series GUIDs from direct Series entries.</item>
+    ///   <item><c>itemIds</c>    — item GUIDs collected from Playlist/BoxSet linked children.</item>
+    /// </list>
     /// </summary>
-    private HashSet<Guid> BuildExclusionSet(
-        PluginConfiguration  config,
-        ILibraryManager      libraryManager,
-        HttpRequest          request)
+    private (HashSet<Guid> seriesIds, HashSet<Guid> itemIds) BuildExclusionSets(
+        PluginConfiguration config,
+        ILibraryManager     libraryManager,
+        HttpRequest         request)
     {
-        // Keys are stored as lowercase GUIDs — bail if we can't identify the user.
+        var seriesIds = new HashSet<Guid>();
+        var itemIds   = new HashSet<Guid>();
+
         if (!request.Query.TryGetValue("userId", out var rawUid)
             || !Guid.TryParse(rawUid.FirstOrDefault(), out var userId))
-        {
-            return new HashSet<Guid>();
-        }
+            return (seriesIds, itemIds);
 
-        var key = userId.ToString("N").ToLowerInvariant(); // "N" = no dashes, matches Jellyfin's frontend user ID format
+        var key        = userId.ToString("N").ToLowerInvariant();
         var userConfig = Array.Find(config.UserSettings, s => s.UserId == key);
 
         _logger.LogInformation(
@@ -198,14 +189,12 @@ public sealed class NextUpFilterMiddleware
             string.Join(", ", config.UserSettings.Select(s => s.UserId)));
 
         if (userConfig is null)
-            return new HashSet<Guid>();
+            return (seriesIds, itemIds);
 
         _logger.LogInformation(
             "NextUpFilter: user has {Count} exclusion entries: [{Entries}]",
             userConfig.ExclusionItems.Length,
             string.Join(", ", userConfig.ExclusionItems.Select(e => $"{e.Type}:{e.Id}:{e.Name}")));
-
-        var ids = new HashSet<Guid>();
 
         foreach (var entry in userConfig.ExclusionItems)
         {
@@ -215,82 +204,60 @@ public sealed class NextUpFilterMiddleware
             switch (entry.Type)
             {
                 case "Series":
-                    ids.Add(itemId);
+                    seriesIds.Add(itemId);
                     break;
 
                 case "Playlist":
-                case "BoxSet": // Jellyfin Collections
-                    AddSeriesFromContainer(ids, itemId, libraryManager);
+                case "BoxSet":
+                    AddLinkedItemIds(itemIds, itemId, libraryManager);
                     break;
             }
         }
 
-        return ids;
+        return (seriesIds, itemIds);
     }
 
     /// <summary>
-    /// Walks the direct children of a container (Playlist or Collection/BoxSet)
-    /// and adds the parent series GUID for every TV item found inside.
-    /// Handles Series, Season, and Episode children.
+    /// Adds the IDs of all linked children of a Playlist or BoxSet directly to
+    /// <paramref name="ids"/>.  No series resolution is performed — the caller
+    /// matches against the episode's own <c>Id</c>, not its <c>SeriesId</c>.
     /// </summary>
-    private void AddSeriesFromContainer(
-        HashSet<Guid>    ids,
-        Guid             containerId,
-        ILibraryManager  libraryManager)
+    private void AddLinkedItemIds(HashSet<Guid> ids, Guid containerId, ILibraryManager libraryManager)
     {
         try
         {
-            var result = libraryManager.GetItemsResult(new MediaBrowser.Controller.Entities.InternalItemsQuery
+            var container = libraryManager.GetItemById(containerId);
+            if (container is null)
             {
-                ParentId  = containerId,
-                Recursive = false,
-            });
+                _logger.LogWarning("NextUpFilter: container {Id} not found in library", containerId);
+                return;
+            }
 
-            foreach (var item in result.Items)
+            var linked = container.LinkedChildren;
+            _logger.LogInformation(
+                "NextUpFilter: container {Id} ({Type}) has {Count} linked children",
+                containerId,
+                container.GetType().Name,
+                linked.Length);
+
+            foreach (var child in linked)
             {
-                switch (item)
-                {
-                    case Series s:
-                        ids.Add(s.Id);
-                        break;
-
-                    case Season season:
-                        if (libraryManager.GetItemById(season.ParentId) is Series seasonParent)
-                            ids.Add(seasonParent.Id);
-                        break;
-
-                    case Episode ep:
-                        var seriesId = ep.SeriesId;
-                        if (seriesId != Guid.Empty)
-                        {
-                            ids.Add(seriesId);
-                        }
-                        else if (libraryManager.GetItemById(ep.ParentId) is Season epSeason
-                              && libraryManager.GetItemById(epSeason.ParentId) is Series epSeries)
-                        {
-                            ids.Add(epSeries.Id);
-                        }
-                        break;
-                }
+                if (child.ItemId.HasValue)
+                    ids.Add(child.ItemId.Value);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "NextUpFilter: failed to resolve container {ContainerId}", containerId);
+            _logger.LogWarning(ex, "NextUpFilter: failed to read linked children of container {Id}", containerId);
         }
     }
 
-    /// <summary>
-    /// Parses the full fetch-ahead JSON, filters excluded series, then slices the
-    /// result to honour the client's original <paramref name="startIndex"/> /
-    /// <paramref name="limit"/>.  Returns the rewritten JSON, or the original on
-    /// any parse error.
-    /// </summary>
     private string FilterNextUpJson(
-        string          json,
-        HashSet<Guid>   excludedSeriesIds,
-        int             startIndex,
-        int             limit)
+        string        json,
+        HashSet<Guid> excludedSeriesIds,
+        HashSet<Guid> excludedItemIds,
+        int           startIndex,
+        int           limit)
     {
         try
         {
@@ -298,24 +265,18 @@ public sealed class NextUpFilterMiddleware
             var root      = doc.RootElement;
 
             if (!root.TryGetProperty("Items", out var itemsEl))
-                return json; // Unexpected shape – pass through.
+                return json;
 
-            // ── Filter ───────────────────────────────────────────────────────────
             var filtered = new List<JsonElement>();
             foreach (var item in itemsEl.EnumerateArray())
             {
-                if (!ShouldExclude(item, excludedSeriesIds))
-                    filtered.Add(item.Clone()); // Clone before doc is disposed.
+                if (!ShouldExclude(item, excludedSeriesIds, excludedItemIds))
+                    filtered.Add(item.Clone());
             }
 
-            // ── Slice to requested page ───────────────────────────────────────────
             int totalFiltered = filtered.Count;
-            var page = filtered
-                .Skip(startIndex)
-                .Take(limit)
-                .ToList();
+            var page = filtered.Skip(startIndex).Take(limit).ToList();
 
-            // ── Rebuild JSON ──────────────────────────────────────────────────────
             using var ms     = new MemoryStream();
             using var writer = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = false });
 
@@ -334,9 +295,9 @@ public sealed class NextUpFilterMiddleware
             writer.WriteEndObject();
             writer.Flush();
 
-            _logger.LogDebug(
+            _logger.LogInformation(
                 "NextUpFilter: {Total} total → {Filtered} after filtering → returning [{Start}..{End}]",
-                totalFiltered + excludedSeriesIds.Count, totalFiltered,
+                totalFiltered + (excludedSeriesIds.Count + excludedItemIds.Count), totalFiltered,
                 startIndex, startIndex + page.Count - 1);
 
             return Encoding.UTF8.GetString(ms.ToArray());
@@ -349,25 +310,28 @@ public sealed class NextUpFilterMiddleware
     }
 
     /// <summary>
-    /// Returns <c>true</c> when the episode's parent series is in the exclusion set.
+    /// Returns <c>true</c> when a Next Up episode should be hidden.
+    /// <list type="bullet">
+    ///   <item>Series exclusions  — matched via the episode's <c>SeriesId</c>.</item>
+    ///   <item>Playlist/BoxSet exclusions — matched via the episode's own <c>Id</c>.</item>
+    /// </list>
     /// </summary>
-    private static bool ShouldExclude(JsonElement item, HashSet<Guid> excludedSeriesIds)
+    private static bool ShouldExclude(
+        JsonElement   item,
+        HashSet<Guid> excludedSeriesIds,
+        HashSet<Guid> excludedItemIds)
     {
-        // Episodes carry a SeriesId property.
-        if (item.TryGetProperty("SeriesId", out var seriesIdProp)
+        if (excludedSeriesIds.Count > 0
+            && item.TryGetProperty("SeriesId", out var seriesIdProp)
             && Guid.TryParse(seriesIdProp.GetString(), out var seriesId)
             && excludedSeriesIds.Contains(seriesId))
-        {
             return true;
-        }
 
-        // Guard against series items appearing directly (unlikely but safe).
-        if (item.TryGetProperty("Id", out var idProp)
+        if (excludedItemIds.Count > 0
+            && item.TryGetProperty("Id", out var idProp)
             && Guid.TryParse(idProp.GetString(), out var id)
-            && excludedSeriesIds.Contains(id))
-        {
+            && excludedItemIds.Contains(id))
             return true;
-        }
 
         return false;
     }
