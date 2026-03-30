@@ -40,4 +40,7 @@ public class ExclusionEntry
 
     /// <summary>Jellyfin item ID (GUID string).</summary>
     public string Id { get; set; } = string.Empty;
+
+    /// <summary>Display name (stored so the config page can render chips without re-fetching).</summary>
+    public string Name { get; set; } = string.Empty;
 }

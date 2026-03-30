@@ -1,40 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8">
-    <title>Next Up Filter</title>
-    <style>
-        .nuf-section          { margin-bottom: 2em; }
-        .nuf-section h2       { font-size: 1.1em; margin-bottom: .5em; }
-        .nuf-row              { display: flex; gap: .5em; align-items: center; margin-bottom: .5em; }
-        .nuf-row input        { flex: 1; }
-
-        #nuf-chip-list        { display: flex; flex-wrap: wrap; gap: .4em; margin-top: .6em; min-height: 2.2em; }
-        .nuf-chip             {
-            display: inline-flex; align-items: center; gap: .3em;
-            background: var(--card-color, #333); border-radius: 1em;
-            padding: .25em .75em; font-size: .85em;
-        }
-        .nuf-chip button      {
-            background: none; border: none; cursor: pointer; padding: 0;
-            line-height: 1; font-size: 1em; color: inherit; opacity: .7;
-        }
-        .nuf-chip button:hover { opacity: 1; }
-
-        .nuf-relative         { position: relative; }
-        .nuf-dropdown         {
-            position: absolute; z-index: 9999;
-            background: var(--panel-bg, #1c1c1c); border: 1px solid #555;
-            border-radius: .3em; max-height: 260px; overflow-y: auto;
-            min-width: 320px;
-        }
-        .nuf-dropdown-item    { padding: .55em .85em; cursor: pointer; font-size: .9em; }
-        .nuf-dropdown-item:hover { background: var(--highlight-bg, #444); }
-        .nuf-dropdown-item small { display: block; opacity: .6; font-size: .8em; }
-
-        #nuf-playlist-select  { width: 100%; max-width: 480px; }
-        .nuf-hint             { font-size: .82em; opacity: .65; margin-top: .3em; }
-    </style>
+  <meta charset="utf-8">
+  <title>Next Up Filter</title>
 </head>
 <body>
 
@@ -43,256 +11,300 @@
      class="page type-interior pluginConfigurationPage"
      data-require="emby-input,emby-button,emby-select">
 
-    <div data-role="content">
-        <div class="content-primary">
-            <form id="NextUpFilterConfigForm">
+  <div data-role="content">
+    <div class="content-primary">
 
-                <div class="nuf-section">
-                    <h2>Excluded series</h2>
-                    <p class="nuf-hint">These series will never appear in your Next Up list.</p>
+      <form id="nufForm">
 
-                    <div class="nuf-row nuf-relative">
-                        <input is="emby-input"
-                               id="nuf-series-search"
-                               type="text"
-                               placeholder="Search for a series to exclude…"
-                               autocomplete="off" />
-                        <div id="nuf-dropdown" class="nuf-dropdown" style="display:none"></div>
-                    </div>
-
-                    <div id="nuf-chip-list"></div>
-                </div>
-
-                <div class="nuf-section">
-                    <h2>Exclusion playlist</h2>
-                    <p class="nuf-hint">
-                        Series represented by items in this playlist will also be excluded.
-                        Changes to the playlist take effect immediately.
-                    </p>
-
-                    <select is="emby-select" id="nuf-playlist-select">
-                        <option value="">— None —</option>
-                    </select>
-
-                    <p id="nuf-playlist-hint" class="nuf-hint" style="display:none"></p>
-                </div>
-
-                <div>
-                    <button is="emby-button" type="submit"
-                            class="raised button-submit block emby-button">
-                        <span>Save</span>
-                    </button>
-                </div>
-
-            </form>
+        <div class="verticalSection">
+          <div class="sectionTitleContainer">
+            <h2 class="sectionTitle">Next Up Filter</h2>
+          </div>
         </div>
+
+        <!-- User picker -->
+        <div class="inputContainer">
+          <label class="inputLabel inputLabelUnfocused" for="nuf-user">Configure for user</label>
+          <select id="nuf-user" class="emby-select-withcolor emby-select"></select>
+        </div>
+
+        <!-- Search -->
+        <div class="inputContainer" style="position:relative">
+          <label class="inputLabel inputLabelUnfocused" for="nuf-search">
+            Add series, playlist, or collection
+          </label>
+          <input id="nuf-search" type="text" class="emby-input"
+                 placeholder="Search..." autocomplete="off">
+          <div id="nuf-results" style="
+            display:none;
+            position:absolute;
+            z-index:100;
+            background:var(--theme-bg-color,#1c1c1c);
+            border:1px solid rgba(255,255,255,.15);
+            border-radius:4px;
+            width:100%;
+            max-height:280px;
+            overflow-y:auto;
+            box-shadow:0 4px 16px rgba(0,0,0,.5);
+          "></div>
+        </div>
+
+        <!-- Chip list -->
+        <div id="nuf-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin:0 0 24px"></div>
+
+        <button type="submit" class="raised button-submit block emby-button">
+          <span>Save</span>
+        </button>
+
+      </form>
+
     </div>
-
-    <script type="text/javascript">
-        var NextUpFilterConfig = {
-            pluginUniqueId: 'a8e7d6c5-b4a3-4e2f-9d1b-c0e8f7a6d5b4'
-        };
-
-        var excludedSeries = [];
-        var searchTimer    = null;
-
-        // ── DOM refs ──────────────────────────────────────────────────────────────
-        var page           = document.querySelector('#NextUpFilterConfigPage');
-        var searchInput    = document.querySelector('#nuf-series-search');
-        var dropdown       = document.querySelector('#nuf-dropdown');
-        var chipList       = document.querySelector('#nuf-chip-list');
-        var playlistSelect = document.querySelector('#nuf-playlist-select');
-        var playlistHint   = document.querySelector('#nuf-playlist-hint');
-
-        // ── Chip rendering ────────────────────────────────────────────────────────
-        function renderChips() {
-            chipList.innerHTML = '';
-            excludedSeries.forEach(function (s) {
-                var chip  = document.createElement('span');
-                chip.className  = 'nuf-chip';
-                chip.dataset.id = s.id;
-
-                var label = document.createElement('span');
-                label.textContent = s.name;
-
-                var btn = document.createElement('button');
-                btn.type      = 'button';
-                btn.title     = 'Remove';
-                btn.textContent = '×';
-                btn.addEventListener('click', function () {
-                    excludedSeries = excludedSeries.filter(function (x) { return x.id !== s.id; });
-                    renderChips();
-                });
-
-                chip.appendChild(label);
-                chip.appendChild(btn);
-                chipList.appendChild(chip);
-            });
-        }
-
-        function addSeries(s) {
-            if (!excludedSeries.some(function (x) { return x.id === s.id; })) {
-                excludedSeries.push(s);
-                renderChips();
-            }
-        }
-
-        // ── Series search ─────────────────────────────────────────────────────────
-        searchInput.addEventListener('input', function () {
-            clearTimeout(searchTimer);
-            var term = searchInput.value.trim();
-            if (term.length < 2) { closeDropdown(); return; }
-            searchTimer = setTimeout(function () { doSearch(term); }, 300);
-        });
-
-        searchInput.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') closeDropdown();
-        });
-
-        document.addEventListener('click', function (e) {
-            if (!e.target.closest('#nuf-series-search') && !e.target.closest('#nuf-dropdown')) {
-                closeDropdown();
-            }
-        });
-
-        function doSearch(term) {
-            ApiClient.getItems(ApiClient.getCurrentUserId(), {
-                IncludeItemTypes: 'Series',
-                Recursive:        true,
-                SearchTerm:       term,
-                Limit:            10,
-                Fields:           'Id,Name,ProductionYear'
-            }).then(function (result) {
-                showDropdown(result.Items || []);
-            }).catch(function (err) {
-                console.warn('NextUpFilter: series search failed', err);
-            });
-        }
-
-        function showDropdown(items) {
-            dropdown.innerHTML = '';
-            if (!items.length) {
-                var empty = document.createElement('div');
-                empty.className   = 'nuf-dropdown-item';
-                empty.textContent = 'No results';
-                dropdown.appendChild(empty);
-            } else {
-                items.forEach(function (item) {
-                    var row  = document.createElement('div');
-                    row.className = 'nuf-dropdown-item';
-
-                    var name = document.createElement('span');
-                    name.textContent = item.Name;
-
-                    var meta = document.createElement('small');
-                    meta.textContent = (item.ProductionYear ? item.ProductionYear + '  •  ' : '') + item.Id;
-
-                    row.appendChild(name);
-                    row.appendChild(meta);
-                    row.addEventListener('click', function () {
-                        addSeries({ id: item.Id, name: item.Name });
-                        closeDropdown();
-                        searchInput.value = '';
-                    });
-                    dropdown.appendChild(row);
-                });
-            }
-            dropdown.style.display = 'block';
-        }
-
-        function closeDropdown() { dropdown.style.display = 'none'; }
-
-        // ── Playlist selector ─────────────────────────────────────────────────────
-        function loadPlaylists() {
-            ApiClient.getItems(ApiClient.getCurrentUserId(), {
-                IncludeItemTypes: 'Playlist',
-                Recursive:        true,
-                Fields:           'Id,Name'
-            }).then(function (result) {
-                (result.Items || []).forEach(function (pl) {
-                    var opt       = document.createElement('option');
-                    opt.value     = pl.Id;
-                    opt.textContent = pl.Name;
-                    playlistSelect.appendChild(opt);
-                });
-            }).catch(function (err) {
-                console.warn('NextUpFilter: playlist load failed', err);
-            });
-        }
-
-        playlistSelect.addEventListener('change', function () {
-            if (!playlistSelect.value) { playlistHint.style.display = 'none'; return; }
-            ApiClient.getItems(ApiClient.getCurrentUserId(), {
-                ParentId: playlistSelect.value,
-                Limit:    5,
-                Fields:   'Name,Type'
-            }).then(function (result) {
-                var total  = result.TotalRecordCount || (result.Items || []).length;
-                var sample = (result.Items || []).map(function (i) { return i.Name; }).join(', ');
-                playlistHint.textContent  = total + ' item(s): ' + sample + (total > 5 ? ' …' : '');
-                playlistHint.style.display = 'block';
-            }).catch(function () { playlistHint.style.display = 'none'; });
-        });
-
-        // ── Load config (called on pageshow) ──────────────────────────────────────
-        function loadConfig() {
-            ApiClient.getPluginConfiguration(NextUpFilterConfig.pluginUniqueId).then(function (config) {
-                var ids = config.ExcludedSeriesIds || [];
-
-                if (ids.length) {
-                    ApiClient.getItems(ApiClient.getCurrentUserId(), {
-                        Ids:    ids.join(','),
-                        Fields: 'Id,Name'
-                    }).then(function (result) {
-                        (result.Items || []).forEach(function (item) {
-                            addSeries({ id: item.Id, name: item.Name });
-                        });
-                    }).catch(function () {
-                        // Fall back to showing raw IDs if name resolution fails.
-                        ids.forEach(function (id) { addSeries({ id: id, name: id }); });
-                    });
-                }
-
-                if (config.ExclusionPlaylistId) {
-                    // Playlist options may still be loading; wait a tick.
-                    setTimeout(function () {
-                        playlistSelect.value = config.ExclusionPlaylistId;
-                        playlistSelect.dispatchEvent(new Event('change'));
-                    }, 300);
-                }
-
-                Dashboard.hideLoadingMsg();
-            });
-        }
-
-        // ── Save ──────────────────────────────────────────────────────────────────
-        document.querySelector('#NextUpFilterConfigForm')
-            .addEventListener('submit', function (e) {
-                e.preventDefault();
-                Dashboard.showLoadingMsg();
-
-                ApiClient.getPluginConfiguration(NextUpFilterConfig.pluginUniqueId).then(function (config) {
-                    config.ExcludedSeriesIds  = excludedSeries.map(function (s) { return s.id; });
-                    config.ExclusionPlaylistId = playlistSelect.value || '';
-
-                    ApiClient.updatePluginConfiguration(NextUpFilterConfig.pluginUniqueId, config)
-                        .then(function (result) {
-                            Dashboard.processPluginConfigurationUpdateResult(result);
-                        });
-                });
-            });
-
-        // ── Boot on pageshow ──────────────────────────────────────────────────────
-        page.addEventListener('pageshow', function () {
-            Dashboard.showLoadingMsg();
-            excludedSeries = [];
-            // Clear and reload playlist options in case library changed.
-            playlistSelect.length = 1; // keep the "None" option
-            loadPlaylists();
-            loadConfig();
-        });
-    </script>
+  </div>
 </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var PLUGIN_ID = 'a8e7d6c5-b4a3-4e2f-9d1b-c0e8f7a6d5b4';
+
+  var TYPE_LABEL = { Series: 'Series', Playlist: 'Playlist', BoxSet: 'Collection' };
+  var TYPE_COLOR = { Series: '#1db954', Playlist: '#1a78c2', BoxSet: '#c2691a' };
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  var fullConfig     = { UserSettings: [] };
+  var selectedUserId = '';
+  var currentItems   = [];   // ExclusionEntry[] for the selected user
+  var searchTimer    = null;
+
+  // ── DOM refs (assigned in onPageShow) ──────────────────────────────────────
+  var elUser, elSearch, elResults, elChips;
+
+  // ── Entry point ────────────────────────────────────────────────────────────
+  document.getElementById('NextUpFilterConfigPage')
+    .addEventListener('pageshow', onPageShow);
+
+  function onPageShow() {
+    elUser    = document.getElementById('nuf-user');
+    elSearch  = document.getElementById('nuf-search');
+    elResults = document.getElementById('nuf-results');
+    elChips   = document.getElementById('nuf-chips');
+
+    elUser.addEventListener('change', function () {
+      saveCurrentUserToConfig();
+      selectedUserId = elUser.value;
+      loadUserItems();
+      renderChips();
+    });
+
+    elSearch.addEventListener('input', function () {
+      clearTimeout(searchTimer);
+      var q = elSearch.value.trim();
+      if (q.length < 2) { hideResults(); return; }
+      searchTimer = setTimeout(function () { runSearch(q); }, 300);
+    });
+
+    elSearch.addEventListener('blur', function () {
+      // Delay so mousedown on a result row fires before the list hides.
+      setTimeout(hideResults, 200);
+    });
+
+    document.getElementById('nufForm').addEventListener('submit', onSubmit);
+
+    Dashboard.showLoadingMsg();
+
+    Promise.all([
+      ApiClient.getUsers(),
+      ApiClient.getPluginConfiguration(PLUGIN_ID),
+    ]).then(function (results) {
+      var users  = results[0];
+      var config = results[1];
+
+      fullConfig = config || { UserSettings: [] };
+      if (!Array.isArray(fullConfig.UserSettings)) fullConfig.UserSettings = [];
+
+      // Populate user picker.
+      elUser.innerHTML = '';
+      users.forEach(function (u) {
+        var opt = document.createElement('option');
+        opt.value       = u.Id;
+        opt.textContent = u.Name;
+        elUser.appendChild(opt);
+      });
+
+      // Default to the currently logged-in user.
+      var currentId = ApiClient.getCurrentUserId();
+      var match = users.find(function (u) {
+        return u.Id.toLowerCase() === currentId.toLowerCase();
+      });
+      selectedUserId = match ? match.Id : (users[0] ? users[0].Id : '');
+      elUser.value = selectedUserId;
+
+      loadUserItems();
+      renderChips();
+    }).catch(function (err) {
+      console.error('NextUpFilter: failed to load config', err);
+    }).finally(function () {
+      Dashboard.hideLoadingMsg();
+    });
+  }
+
+  // ── Per-user helpers ───────────────────────────────────────────────────────
+
+  function getUserSetting(userId) {
+    var key = userId.toLowerCase();
+    return fullConfig.UserSettings.find(function (s) { return s.UserId === key; });
+  }
+
+  function loadUserItems() {
+    var s = getUserSetting(selectedUserId);
+    currentItems = s ? (s.ExclusionItems || []).slice() : [];
+  }
+
+  function saveCurrentUserToConfig() {
+    var key = selectedUserId.toLowerCase();
+    fullConfig.UserSettings = fullConfig.UserSettings.filter(function (s) {
+      return s.UserId !== key;
+    });
+    fullConfig.UserSettings.push({ UserId: key, ExclusionItems: currentItems.slice() });
+  }
+
+  // ── Chips ──────────────────────────────────────────────────────────────────
+
+  function renderChips() {
+    elChips.innerHTML = '';
+    currentItems.forEach(function (item) {
+      elChips.appendChild(makeChip(item));
+    });
+  }
+
+  function makeChip(item) {
+    var chip = document.createElement('div');
+    chip.style.cssText = [
+      'display:inline-flex', 'align-items:center', 'gap:6px',
+      'padding:4px 10px', 'border-radius:16px',
+      'background:rgba(255,255,255,.1)', 'font-size:.85em',
+    ].join(';');
+
+    var badge = document.createElement('span');
+    badge.textContent = TYPE_LABEL[item.Type] || item.Type;
+    badge.style.cssText = [
+      'font-size:.75em', 'padding:1px 6px', 'border-radius:10px',
+      'background:' + (TYPE_COLOR[item.Type] || '#555'),
+      'color:#fff', 'font-weight:600',
+    ].join(';');
+
+    var nameEl = document.createElement('span');
+    nameEl.textContent = item.Name || item.Id;
+
+    var removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.textContent = '×';
+    removeBtn.style.cssText = [
+      'background:none', 'border:none', 'color:inherit',
+      'cursor:pointer', 'font-size:1.1em', 'padding:0 0 0 4px', 'line-height:1',
+    ].join(';');
+    removeBtn.addEventListener('click', function () {
+      currentItems = currentItems.filter(function (i) { return i.Id !== item.Id; });
+      renderChips();
+    });
+
+    chip.appendChild(badge);
+    chip.appendChild(nameEl);
+    chip.appendChild(removeBtn);
+    return chip;
+  }
+
+  // ── Search ─────────────────────────────────────────────────────────────────
+
+  function runSearch(query) {
+    ApiClient.getItems(ApiClient.getCurrentUserId(), {
+      SearchTerm: query,
+      IncludeItemTypes: 'Series,Playlist,BoxSet',
+      Recursive: true,
+      Limit: 8,
+      Fields: 'BasicSyncInfo',
+    }).then(function (result) {
+      renderResults(result.Items || []);
+    }).catch(function () {
+      hideResults();
+    });
+  }
+
+  function renderResults(items) {
+    elResults.innerHTML = '';
+    if (!items.length) { hideResults(); return; }
+
+    items.forEach(function (item) {
+      var row = document.createElement('div');
+      row.style.cssText = [
+        'display:flex', 'align-items:center', 'gap:8px',
+        'padding:8px 12px', 'cursor:pointer',
+      ].join(';');
+      row.addEventListener('mouseenter', function () {
+        row.style.background = 'rgba(255,255,255,.08)';
+      });
+      row.addEventListener('mouseleave', function () {
+        row.style.background = '';
+      });
+
+      var badge = document.createElement('span');
+      badge.textContent = TYPE_LABEL[item.Type] || item.Type;
+      badge.style.cssText = [
+        'font-size:.72em', 'padding:1px 6px', 'border-radius:10px', 'flex-shrink:0',
+        'background:' + (TYPE_COLOR[item.Type] || '#555'),
+        'color:#fff', 'font-weight:600',
+      ].join(';');
+
+      var nameEl = document.createElement('span');
+      nameEl.textContent = item.Name;
+      nameEl.style.overflow     = 'hidden';
+      nameEl.style.textOverflow = 'ellipsis';
+      nameEl.style.whiteSpace   = 'nowrap';
+
+      row.appendChild(badge);
+      row.appendChild(nameEl);
+
+      row.addEventListener('mousedown', function () {
+        var alreadyAdded = currentItems.some(function (i) { return i.Id === item.Id; });
+        if (!alreadyAdded) {
+          currentItems.push({ Type: item.Type, Id: item.Id, Name: item.Name });
+          renderChips();
+        }
+        elSearch.value = '';
+        hideResults();
+      });
+
+      elResults.appendChild(row);
+    });
+
+    elResults.style.display = 'block';
+  }
+
+  function hideResults() {
+    elResults.style.display = 'none';
+    elResults.innerHTML = '';
+  }
+
+  // ── Save ───────────────────────────────────────────────────────────────────
+
+  function onSubmit(e) {
+    e.preventDefault();
+    Dashboard.showLoadingMsg();
+    saveCurrentUserToConfig();
+
+    ApiClient.updatePluginConfiguration(PLUGIN_ID, fullConfig)
+      .then(function (result) {
+        Dashboard.processPluginConfigurationUpdateResult(result);
+      })
+      .catch(function (err) {
+        console.error('NextUpFilter: failed to save config', err);
+        Dashboard.hideLoadingMsg();
+      });
+  }
+
+})();
+</script>
 
 </body>
 </html>
