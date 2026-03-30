@@ -1,0 +1,68 @@
+/* Uses Jellyfin CSS variables where possible so the UI adapts to the user's theme. */
+
+.nuf-section         { margin-bottom: 2em; }
+.nuf-section h2      { font-size: 1.1em; margin-bottom: .4em; }
+.nuf-hint            { font-size: .82em; opacity: .65; margin: .3em 0 .6em; }
+
+/* ── Search ───────────────────────────────────────────────────────────────── */
+.nuf-search-wrap     { position: relative; margin-bottom: .5em; }
+
+.nuf-search-wrap input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.nuf-dropdown {
+  position: absolute;
+  z-index: 9999;
+  top: 100%;
+  left: 0;
+  background: var(--panel-bg, #1c1c1c);
+  border: 1px solid #555;
+  border-radius: .3em;
+  max-height: 260px;
+  overflow-y: auto;
+  min-width: 320px;
+}
+
+.nuf-dropdown-item        { padding: .55em .85em; cursor: pointer; font-size: .9em; }
+.nuf-dropdown-item:hover  { background: var(--highlight-bg, #444); }
+.nuf-dropdown-item small  { display: block; opacity: .6; font-size: .8em; }
+
+/* ── Chips ────────────────────────────────────────────────────────────────── */
+.nuf-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4em;
+  margin-top: .6em;
+  min-height: 2.2em;
+}
+
+.nuf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .35em;
+  background: var(--card-color, #333);
+  border-radius: 1em;
+  padding: .25em .75em;
+  font-size: .85em;
+}
+
+.nuf-chip-type {
+  font-size: .72em;
+  opacity: .5;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.nuf-chip button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  font-size: 1em;
+  color: inherit;
+  opacity: .7;
+}
+.nuf-chip button:hover { opacity: 1; }

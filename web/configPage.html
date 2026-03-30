@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Next Up Filter</title>
+</head>
+<body>
+  <!--
+    Jellyfin identifies this as a plugin config page via these attributes.
+    The content-primary div is where Jellyfin's dashboard styles apply.
+  -->
+  <div
+    id="NextUpFilterConfigPage"
+    data-role="page"
+    class="page type-interior pluginConfigurationPage"
+  >
+    <div data-role="content">
+      <div class="content-primary">
+        <div id="root"></div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

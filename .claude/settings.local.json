@@ -6,7 +6,8 @@
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:api.githubusercontent.com)",
       "Bash(where jq:*)",
-      "Bash(winget list:*)"
+      "Bash(winget list:*)",
+      "WebFetch(domain:jellyfin.org)"
     ]
   }
 }

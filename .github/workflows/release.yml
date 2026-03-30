@@ -54,7 +54,18 @@ jobs:
 
           echo "Tag: $TAG  →  version: $VERSION ($DOTNET_VERSION)  prerelease: $PRERELEASE"
 
-      # ── Build ─────────────────────────────────────────────────────────────────
+      # ── Web (config page) ──────────────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build config page
+        working-directory: web
+        run: npm install && npm run build
+
+      # ── .NET ───────────────────────────────────────────────────────────────────
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}

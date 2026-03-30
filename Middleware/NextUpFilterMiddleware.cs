@@ -162,61 +162,67 @@ public sealed class NextUpFilterMiddleware
     }
 
     /// <summary>
-    /// Combines manually-configured series IDs with any series resolved from the
-    /// configured exclusion playlist.
+    /// Returns the exclusion set for the user identified by the <c>userId</c>
+    /// query parameter.  Returns an empty set when no per-user config exists.
     /// </summary>
     private HashSet<Guid> BuildExclusionSet(
         PluginConfiguration  config,
         ILibraryManager      libraryManager,
         HttpRequest          request)
     {
-        var ids = new HashSet<Guid>();
-
-        // Manual list
-        foreach (var raw in config.ExcludedSeriesIds)
+        // Keys are stored as lowercase GUIDs — bail if we can't identify the user.
+        if (!request.Query.TryGetValue("userId", out var rawUid)
+            || !Guid.TryParse(rawUid.FirstOrDefault(), out var userId))
         {
-            if (Guid.TryParse(raw, out var g))
-                ids.Add(g);
+            return new HashSet<Guid>();
         }
 
-        // Playlist-derived list
-        if (!string.IsNullOrWhiteSpace(config.ExclusionPlaylistId)
-            && Guid.TryParse(config.ExclusionPlaylistId, out var playlistId))
+        var key = userId.ToString().ToLowerInvariant();
+        if (!config.UserSettings.TryGetValue(key, out var userConfig))
+            return new HashSet<Guid>();
+
+        var ids = new HashSet<Guid>();
+
+        foreach (var entry in userConfig.ExclusionItems)
         {
-            AddSeriesFromPlaylist(ids, playlistId, libraryManager, request);
+            if (!Guid.TryParse(entry.Id, out var itemId))
+                continue;
+
+            switch (entry.Type)
+            {
+                case "Series":
+                    ids.Add(itemId);
+                    break;
+
+                case "Playlist":
+                case "BoxSet": // Jellyfin Collections
+                    AddSeriesFromContainer(ids, itemId, libraryManager);
+                    break;
+            }
         }
 
         return ids;
     }
 
     /// <summary>
-    /// Resolves every series represented by items inside <paramref name="playlistId"/>
-    /// and adds their GUIDs to <paramref name="ids"/>.
-    /// Supported playlist item types: Series, Season, Episode.
+    /// Walks the direct children of a container (Playlist or Collection/BoxSet)
+    /// and adds the parent series GUID for every TV item found inside.
+    /// Handles Series, Season, and Episode children.
     /// </summary>
-    private void AddSeriesFromPlaylist(
+    private void AddSeriesFromContainer(
         HashSet<Guid>    ids,
-        Guid             playlistId,
-        ILibraryManager  libraryManager,
-        HttpRequest      request)
+        Guid             containerId,
+        ILibraryManager  libraryManager)
     {
         try
         {
-            // Resolve user from query string so we respect per-user playlists.
-            Guid? userId = null;
-            if (request.Query.TryGetValue("userId", out var rawUid)
-                && Guid.TryParse(rawUid.FirstOrDefault(), out var uid))
+            var result = libraryManager.GetItemsResult(new MediaBrowser.Controller.Entities.InternalItemsQuery
             {
-                userId = uid;
-            }
-
-            var queryResult = libraryManager.GetItemsResult(new MediaBrowser.Controller.Entities.InternalItemsQuery
-            {
-                ParentId  = playlistId,
+                ParentId  = containerId,
                 Recursive = false,
             });
 
-            foreach (var item in queryResult.Items)
+            foreach (var item in result.Items)
             {
                 switch (item)
                 {
@@ -230,8 +236,6 @@ public sealed class NextUpFilterMiddleware
                         break;
 
                     case Episode ep:
-                        // Episode.SeriesId is a nullable Guid in some Jellyfin versions.
-                        // Fall back to walking up the parent chain if needed.
                         var seriesId = ep.SeriesId;
                         if (seriesId != Guid.Empty)
                         {
@@ -248,7 +252,7 @@ public sealed class NextUpFilterMiddleware
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "NextUpFilter: failed to resolve playlist {PlaylistId}", playlistId);
+            _logger.LogWarning(ex, "NextUpFilter: failed to resolve container {ContainerId}", containerId);
         }
     }
 
