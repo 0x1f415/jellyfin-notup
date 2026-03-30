@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.6.2.0",
+        "targetAbi": "10.9.0.0",
+        "sourceUrl": "https://github.com/0x1f415/jellyfin-notup/releases/download/v0.6.2/Jellyfin.Plugin.NextUpFilter_v0.6.2.zip",
+        "checksum": "BBFA1F81F55FECBD3394AEB61F469A4F",
+        "changelog": "**Full Changelog**: https://github.com/0x1f415/jellyfin-notup/compare/v0.6.1...v0.6.2",
+        "timestamp": "2026-03-30"
+      },
+      {
         "version": "0.6.1.0",
         "targetAbi": "10.9.0.0",
         "sourceUrl": "https://github.com/0x1f415/jellyfin-notup/releases/download/v0.6.1/Jellyfin.Plugin.NextUpFilter_v0.6.1.zip",
