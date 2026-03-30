@@ -37,9 +37,12 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         yield return new PluginPageInfo
         {
-            Name        = Name,
-            // The HTML file is embedded as a resource; the path matches its namespace + filename.
-            EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configPage.html"
+            Name                 = Name,
+            DisplayName          = "Next Up Filter",
+            EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configPage.html",
+            EnableInMainMenu     = true,
+            MenuSection          = "server",
+            MenuIcon             = "filter_list",
         };
     }
 }
