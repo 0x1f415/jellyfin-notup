@@ -1,23 +1,33 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { viteSingleFile } from 'vite-plugin-singlefile'
 import { resolve } from 'path'
 
+// vite-plugin-singlefile inlines JS but preserves type="module" on the script
+// tag. Jellyfin injects plugin pages into the DOM dynamically; inline module
+// scripts execute fine when statically parsed, but Jellyfin re-evaluates
+// script tags via createElement('script'), which does NOT run type="module"
+// scripts. This plugin strips that attribute after inlining is complete.
+function stripModuleType(): Plugin {
+  return {
+    name: 'strip-module-type',
+    enforce: 'post',
+    transformIndexHtml(html: string) {
+      return html.replace(/<script\s+type="module">/g, '<script>')
+    },
+  }
+}
+
 // Outputs a single self-contained HTML file to ../Configuration/configPage.html
 // so it can be picked up by the C# embedded resource declaration in the .csproj.
 export default defineConfig({
-  plugins: [react(), viteSingleFile()],
+  plugins: [react(), viteSingleFile(), stripModuleType()],
   build: {
     outDir: '../Configuration',
     emptyOutDir: false,
     rollupOptions: {
-      // Using configPage.html (not index.html) so Vite preserves the filename
-      // in the output directory.
       input: resolve(__dirname, 'configPage.html'),
       output: {
-        // IIFE format avoids <script type="module"> in the inlined output.
-        // Jellyfin loads plugin pages by injecting HTML into the DOM; dynamically
-        // inserted module scripts don't execute, but plain IIFE scripts do.
         format: 'iife',
         name: 'NextUpFilterConfig',
       },
