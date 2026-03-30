@@ -188,7 +188,7 @@ public sealed class NextUpFilterMiddleware
             return new HashSet<Guid>();
         }
 
-        var key = userId.ToString().ToLowerInvariant();
+        var key = userId.ToString("N").ToLowerInvariant(); // "N" = no dashes, matches Jellyfin's frontend user ID format
         var userConfig = Array.Find(config.UserSettings, s => s.UserId == key);
 
         _logger.LogInformation(
